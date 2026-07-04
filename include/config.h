@@ -28,7 +28,7 @@
 
 // ---- Refresh intervals ----
 #define PRAYER_FETCH_INTERVAL_MS (30UL * 60UL * 1000UL) // re-scrape every 30 min
-#define DISPLAY_SWITCH_MS 4000UL                          // alternate every 4s
+#define DISPLAY_SWITCH_MS 10000UL                         // clock face shown for 10s
 
 // ---- Display appearance ----
 #define DISPLAY_INTENSITY 4 // 0 (dim) - 15 (max brightness)

@@ -19,7 +19,7 @@ void displayShowStatic(const String &text) {
 
 void displayShowScrolling(const String &text) {
     P.displayClear();
-    P.displayText(text.c_str(), PA_LEFT, 40, 500, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
+    P.displayText(text.c_str(), PA_LEFT, 40, 0, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
 }
 
 bool displayAnimateScroll() {
