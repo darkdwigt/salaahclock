@@ -15,6 +15,10 @@ static unsigned long lastModeSwitch = 0;
 static DisplayMode mode = MODE_CLOCK;
 static int lastShownMinute = -1;
 static int lastFetchedDay = -1;
+// MD_Parola's displayText() stores a pointer into this buffer rather than
+// copying it, and keeps reading from it for the whole scroll animation, so
+// it must outlive the loop() call that starts the scroll.
+static String countdownText;
 
 static void connectWiFi() {
     Serial.printf("Connecting to WiFi \"%s\"...\n", WIFI_SSID);
@@ -64,14 +68,12 @@ static long secondsToNextPrayer(const struct tm &now, String &label) {
 }
 
 static String formatCountdown(long totalSeconds, const String &label) {
-    long h = totalSeconds / 3600;
-    long m = (totalSeconds % 3600) / 60;
-    long s = totalSeconds % 60;
-    char buf[32];
-    if (h > 0) {
-        snprintf(buf, sizeof(buf), "%s in %ld:%02ld:%02ld", label.c_str(), h, m, s);
+    long m = totalSeconds / 60;
+    char buf[48];
+    if (m > 0) {
+        snprintf(buf, sizeof(buf), "%s: %ld min", label.c_str(), m);
     } else {
-        snprintf(buf, sizeof(buf), "%s in %ld:%02ld", label.c_str(), m, s);
+        snprintf(buf, sizeof(buf), "%s: under a min", label.c_str());
     }
     return String(buf);
 }
@@ -131,27 +133,27 @@ void loop() {
         return;
     }
 
-    if (millis() - lastModeSwitch >= DISPLAY_SWITCH_MS) {
+    bool switchToCountdown = mode == MODE_CLOCK &&
+                              millis() - lastModeSwitch >= DISPLAY_SWITCH_MS;
+    bool switchToClock = mode == MODE_COUNTDOWN && displayAnimateScroll();
+
+    if (switchToCountdown || switchToClock) {
         mode = (mode == MODE_CLOCK) ? MODE_COUNTDOWN : MODE_CLOCK;
         lastModeSwitch = millis();
         lastShownMinute = -1; // force redraw
-
         if (mode == MODE_COUNTDOWN && prayerTimes.valid) {
             String label;
             long secs = secondsToNextPrayer(now, label);
-            displayShowScrolling(formatCountdown(secs, label));
+            countdownText = formatCountdown(secs, label);
+            displayShowScrolling(countdownText);
         }
     }
 
-    if (mode == MODE_CLOCK) {
-        if (now.tm_min != lastShownMinute) {
-            char buf[6];
-            snprintf(buf, sizeof(buf), "%02d:%02d", now.tm_hour, now.tm_min);
-            displayShowStatic(buf);
-            lastShownMinute = now.tm_min;
-        }
-    } else {
-        displayAnimateScroll();
+    if (mode == MODE_CLOCK && now.tm_min != lastShownMinute) {
+        char buf[6];
+        snprintf(buf, sizeof(buf), "%02d:%02d", now.tm_hour, now.tm_min);
+        displayShowStatic(buf);
+        lastShownMinute = now.tm_min;
     }
 
     delay(10);

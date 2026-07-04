@@ -8,9 +8,14 @@
 #define MAX_DEVICES 4
 #define CS_PIN      25
 
-// Most cheap 4-in-1 MAX7219 modules use the FC16 chain wiring.
-// If the display shows garbled/mirrored/reversed text, try
-// PAROLA_HW or GENERIC_HW here instead.
+// Confirmed working on this build's physical matrix: FC16_HW, with the
+// 4-module strip physically mounted flipped 180 degrees from how it
+// arrived (long edge horizontal, rotated so the IN header ends up on
+// the correct side). If you swap the matrix hardware or re-wire it,
+// text orientation problems can come from either this constant
+// (PAROLA_HW / GENERIC_HW / ICSTATION_HW are the alternatives) or from
+// the physical mounting rotation -- try flipping the block before
+// cycling through every HARDWARE_TYPE value.
 #define HARDWARE_TYPE MD_MAX72XX::FC16_HW
 
 // ---- Prayer times source ----

@@ -22,8 +22,6 @@ void displayShowScrolling(const String &text) {
     P.displayText(text.c_str(), PA_LEFT, 40, 500, PA_SCROLL_LEFT, PA_SCROLL_LEFT);
 }
 
-void displayAnimateScroll() {
-    if (P.displayAnimate()) {
-        P.displayReset();
-    }
+bool displayAnimateScroll() {
+    return P.displayAnimate();
 }

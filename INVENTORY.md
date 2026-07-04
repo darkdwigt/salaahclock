@@ -1,20 +1,20 @@
 # Hardware inventory
 
-Status as of 2026-07-03. Nothing has arrived yet — all "in checkout bag"
-items below are ordered/pending, not in hand.
+Status as of 2026-07-04. Core hardware arrived, soldered, wired, and
+confirmed working end-to-end (see `CLAUDE.md`).
 
-## In checkout bag (ordered, not yet received)
+## In hand (received, soldered/wired, confirmed working)
 
-- [ ] LED Dot Matrix Display Module — 8x8 x4, MAX7219 driver (chained
+- [x] LED Dot Matrix Display Module — 8x8 x4, MAX7219 driver (chained
       4-in-1 board)
-- [ ] FireBeetle ESP32 IoT Microcontroller
-- [ ] Female-to-Female SIL jumper wires — 40-wire ribbon, 10 repeating
+- [x] FireBeetle ESP32 IoT Microcontroller — header pins soldered
+- [x] Female-to-Female SIL jumper wires — 40-wire ribbon, 10 repeating
       colours
+- [x] USB cable matching the FireBeetle's port — confirmed working for
+      flashing and serial (`/dev/cu.usbserial-140`)
 
-## Still need to buy
+## Still need to buy (cosmetic only, not blocking)
 
-- [ ] USB cable matching the FireBeetle's port (confirm micro-USB vs
-      USB-C once it arrives) — needed for flashing and power
 - [ ] 5V USB power supply / wall adapter (or power bank) — only needed
       if the clock will run standalone away from a laptop
 - [ ] Diffuser material (thin white acrylic, tracing paper, or similar)

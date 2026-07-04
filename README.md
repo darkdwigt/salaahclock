@@ -28,10 +28,35 @@ live in `include/config.h` (`CS_PIN`) if you need to change them.
 
 ## Display orientation
 
-Cheap 4-in-1 MAX7219 boards ship with a few different internal wirings.
-If text comes out mirrored, reversed, or split oddly across modules,
-change `HARDWARE_TYPE` in `include/config.h` to `PAROLA_HW` or
-`GENERIC_HW` and rebuild.
+Cheap 4-in-1 MAX7219 boards ship with a few different internal wirings,
+and the module strip itself can also just be mounted the wrong way up.
+If text comes out wrong, there are two independent things to try:
+
+1. **Physically flip the matrix strip** (rotate the whole 4-module
+   block 180 degrees). This build's matrix needed this — as received,
+   text came out rotated 90 degrees; flipping the block fixed it with
+   no code change.
+2. **Change `HARDWARE_TYPE`** in `include/config.h` between `FC16_HW`
+   (default, confirmed working on this build), `PAROLA_HW`,
+   `GENERIC_HW`, or `ICSTATION_HW`, then rebuild and reflash.
+
+These are independent axes — a rotation problem can look similar to a
+hardware-type mismatch, so if one fix doesn't fully resolve it, try the
+other before assuming the wiring itself is bad.
+
+## Known-good SPI clock speed
+
+`lib/MD_MAX72XX` is a vendored (not registry-fetched) copy of the
+MD_MAX72XX library, patched to run the SPI clock at 1MHz instead of the
+upstream default of 8MHz (`MD_MAX72xx.cpp`, `spiSend()`). At 8MHz, the
+scrolling countdown text corrupted intermittently over our jumper-wire
+connections — signal integrity, not a loose connection — because the
+static clock face redraws only once a minute and rarely triggers a
+transfer, while the scrolling animation sends hundreds of transfers a
+second. 1MHz has been solid in testing. If you ever delete `lib/` or
+switch back to a registry `lib_deps` entry for MD_MAX72XX, you'll lose
+this patch silently — the symptom will be intermittent garbling during
+scrolling only, not the static clock.
 
 ## Setup
 
@@ -55,9 +80,11 @@ change `HARDWARE_TYPE` in `include/config.h` to `PAROLA_HW` or
   Africa has no DST).
 - Prayer times are re-fetched every 30 minutes and also right after local
   midnight rolls over, so the next day's times show up promptly.
-- The display alternates every 4 seconds (`DISPLAY_SWITCH_MS` in
-  `config.h`) between the static current time and a scrolling
-  "PrayerName in H:MM:SS" countdown to whichever prayer is next. After
+- The display shows the static current time for 4 seconds
+  (`DISPLAY_SWITCH_MS` in `config.h`), then switches to a scrolling
+  "PrayerName: X min" countdown to whichever prayer is next and holds
+  that mode until the scroll has fully passed across the display once
+  (not on a fixed timer — see gotcha below), then switches back. After
   Isha, it counts down to tomorrow's Fajr using today's Fajr time as an
   approximation until the next scrape confirms tomorrow's actual time.
 
@@ -71,3 +98,19 @@ change `HARDWARE_TYPE` in `include/config.h` to `PAROLA_HW` or
   only the five daily prayers are (Fajr/Zuhr/Asr/Maghrib/Isha).
 - If the masjid site is unreachable, the clock keeps using the last
   successfully fetched prayer times.
+
+## Gotchas found the hard way
+
+- **MD_Parola's `displayText()`/`setTextBuffer()` stores a raw pointer
+  into whatever string you pass it — it does not copy the text.** It
+  keeps reading from that pointer for the entire scroll animation. Any
+  string passed to `displayShowScrolling()` must outlive the scroll, so
+  `main.cpp` keeps it in a file-scope `static String countdownText`
+  rather than a function-local temporary. Passing a temporary here
+  silently produces a dangling pointer: the scroll appears to "complete"
+  almost instantly because the library reads freed/garbage memory and
+  sees what looks like an empty string.
+- Mode switching for the countdown is driven by scroll-completion
+  (`displayAnimateScroll()` returning `true`), not a fixed timer —
+  `DISPLAY_SWITCH_MS` only governs how long the clock face is shown. A
+  fixed timer here previously cut the scroll off mid-pass every cycle.

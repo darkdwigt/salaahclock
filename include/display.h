@@ -10,5 +10,6 @@ void displayShowStatic(const String &text);
 void displayShowScrolling(const String &text);
 
 // Must be called every loop() iteration while a scrolling message is
-// active; keeps the scroll animation moving and re-triggers looping.
-void displayAnimateScroll();
+// active; keeps the scroll animation moving. Returns true once the
+// message has fully scrolled across the display (one complete pass).
+bool displayAnimateScroll();
