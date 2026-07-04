@@ -21,6 +21,13 @@
 // ---- Prayer times source ----
 #define PRAYER_TIMES_URL "https://www.muaadhbinjabal.org.za/"
 
+// ---- Weather source (wttr.in) ----
+// No city set - wttr.in geolocates the ESP32's public IP. Percent-notation
+// format string, kept ASCII-only (no degree symbol/emoji) for the matrix
+// font: %C = condition text, %t = temperature.
+#define WEATHER_FORMAT "%C+%t"
+#define WEATHER_FETCH_INTERVAL_MS (60UL * 60UL * 1000UL) // re-fetch hourly
+
 // ---- Timezone ----
 // South Africa Standard Time, no DST.
 #define TZ_INFO "SAST-2"
@@ -31,4 +38,4 @@
 #define DISPLAY_SWITCH_MS 10000UL                         // clock face shown for 10s
 
 // ---- Display appearance ----
-#define DISPLAY_INTENSITY 4 // 0 (dim) - 15 (max brightness)
+#define DISPLAY_INTENSITY 2 // 0 (dim) - 15 (max brightness)

@@ -6,19 +6,26 @@
 #include "display.h"
 #include "prayer_times.h"
 #include "secrets.h"
+#include "weather.h"
 
-enum DisplayMode { MODE_CLOCK, MODE_COUNTDOWN };
+enum DisplayMode { MODE_CLOCK, MODE_COUNTDOWN, MODE_WEATHER };
 
 static PrayerTimes prayerTimes;
+static WeatherData weather;
 static unsigned long lastPrayerFetch = 0;
+static unsigned long lastWeatherFetch = 0;
 static unsigned long lastModeSwitch = 0;
 static DisplayMode mode = MODE_CLOCK;
+// Alternates which scrolling mode follows the clock face, so countdown and
+// weather each get an even share of airtime regardless of fetch cadence.
+static bool nextIsWeather = false;
 static int lastShownMinute = -1;
 static int lastFetchedDay = -1;
 // MD_Parola's displayText() stores a pointer into this buffer rather than
 // copying it, and keeps reading from it for the whole scroll animation, so
 // it must outlive the loop() call that starts the scroll.
 static String countdownText;
+static String weatherText;
 
 static void connectWiFi() {
     Serial.printf("Connecting to WiFi \"%s\"...\n", WIFI_SSID);
@@ -78,6 +85,33 @@ static String formatCountdown(long totalSeconds, const String &label) {
     return String(buf);
 }
 
+// Switches to `m` and kicks off its scroll. If the mode's data isn't ready
+// yet (e.g. weather hasn't been fetched successfully), falls straight back
+// to the clock instead of scrolling something empty.
+static void enterMode(DisplayMode m, const struct tm &now) {
+    mode = m;
+    lastModeSwitch = millis();
+    lastShownMinute = -1;
+
+    if (m == MODE_COUNTDOWN) {
+        if (!prayerTimes.valid) {
+            mode = MODE_CLOCK;
+            return;
+        }
+        String label;
+        long secs = secondsToNextPrayer(now, label);
+        countdownText = formatCountdown(secs, label);
+        displayShowScrolling(countdownText);
+    } else if (m == MODE_WEATHER) {
+        if (!weather.valid) {
+            mode = MODE_CLOCK;
+            return;
+        }
+        weatherText = weather.text;
+        displayShowScrolling(weatherText);
+    }
+}
+
 void setup() {
     Serial.begin(115200);
     delay(200);
@@ -91,6 +125,9 @@ void setup() {
     Serial.println("Waiting for NTP time sync...");
     struct tm timeinfo;
     while (!getLocalTime(&timeinfo, 10000)) {
+        if (WiFi.status() != WL_CONNECTED) {
+            connectWiFi();
+        }
         Serial.println("NTP sync retrying...");
     }
     Serial.println("Time synced.");
@@ -102,6 +139,13 @@ void setup() {
     }
     lastPrayerFetch = millis();
     lastFetchedDay = timeinfo.tm_yday;
+
+    if (fetchWeather(weather)) {
+        Serial.println("Weather fetched.");
+    } else {
+        Serial.println("Initial weather fetch failed, will retry in loop()");
+    }
+    lastWeatherFetch = millis();
 
     lastModeSwitch = millis();
 }
@@ -128,25 +172,33 @@ void loop() {
         lastPrayerFetch = millis();
     }
 
+    if (!weather.valid || millis() - lastWeatherFetch >= WEATHER_FETCH_INTERVAL_MS) {
+        if (fetchWeather(weather)) {
+            Serial.println("Weather refreshed.");
+        } else {
+            Serial.println("Weather refresh failed, keeping last known value.");
+        }
+        lastWeatherFetch = millis();
+    }
+
     if (!haveTime) {
         delay(50);
         return;
     }
 
-    bool switchToCountdown = mode == MODE_CLOCK &&
-                              millis() - lastModeSwitch >= DISPLAY_SWITCH_MS;
-    bool switchToClock = mode == MODE_COUNTDOWN && displayAnimateScroll();
+    bool switchFromClock = mode == MODE_CLOCK &&
+                            millis() - lastModeSwitch >= DISPLAY_SWITCH_MS;
+    bool switchFromScroll = (mode == MODE_COUNTDOWN || mode == MODE_WEATHER) &&
+                             displayAnimateScroll();
 
-    if (switchToCountdown || switchToClock) {
-        mode = (mode == MODE_CLOCK) ? MODE_COUNTDOWN : MODE_CLOCK;
+    if (switchFromClock) {
+        DisplayMode next = nextIsWeather ? MODE_WEATHER : MODE_COUNTDOWN;
+        nextIsWeather = !nextIsWeather;
+        enterMode(next, now);
+    } else if (switchFromScroll) {
+        mode = MODE_CLOCK;
         lastModeSwitch = millis();
         lastShownMinute = -1; // force redraw
-        if (mode == MODE_COUNTDOWN && prayerTimes.valid) {
-            String label;
-            long secs = secondsToNextPrayer(now, label);
-            countdownText = formatCountdown(secs, label);
-            displayShowScrolling(countdownText);
-        }
     }
 
     if (mode == MODE_CLOCK && now.tm_min != lastShownMinute) {
