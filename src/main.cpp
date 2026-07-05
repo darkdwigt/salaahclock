@@ -5,20 +5,27 @@
 #include "config.h"
 #include "display.h"
 #include "prayer_times.h"
+#include "rss.h"
 #include "secrets.h"
 #include "weather.h"
 
-enum DisplayMode { MODE_CLOCK, MODE_COUNTDOWN, MODE_WEATHER };
+enum DisplayMode { MODE_CLOCK, MODE_COUNTDOWN, MODE_WEATHER, MODE_NEWS };
 
 static PrayerTimes prayerTimes;
 static WeatherData weather;
+static RssHeadlines rssHeadlines;
 static unsigned long lastPrayerFetch = 0;
 static unsigned long lastWeatherFetch = 0;
+static unsigned long lastRssFetch = 0;
 static unsigned long lastModeSwitch = 0;
 static DisplayMode mode = MODE_CLOCK;
-// Alternates which scrolling mode follows the clock face, so countdown and
-// weather each get an even share of airtime regardless of fetch cadence.
-static bool nextIsWeather = false;
+// Rotates which scrolling mode follows the clock face, so countdown,
+// weather, and news each get an even share of airtime regardless of fetch
+// cadence: clock -> countdown -> clock -> weather -> clock -> news -> repeat.
+static const DisplayMode ROTATION[] = {MODE_COUNTDOWN, MODE_WEATHER, MODE_NEWS};
+static int rotationIndex = 0;
+// Round-robins through the fetched headlines, one per news turn.
+static int newsHeadlineIndex = 0;
 static int lastShownMinute = -1;
 static int lastFetchedDay = -1;
 // MD_Parola's displayText() stores a pointer into this buffer rather than
@@ -26,6 +33,7 @@ static int lastFetchedDay = -1;
 // it must outlive the loop() call that starts the scroll.
 static String countdownText;
 static String weatherText;
+static String newsText;
 
 static void connectWiFi() {
     Serial.printf("Connecting to WiFi \"%s\"...\n", WIFI_SSID);
@@ -109,6 +117,15 @@ static void enterMode(DisplayMode m, const struct tm &now) {
         }
         weatherText = weather.text;
         displayShowScrolling(weatherText);
+    } else if (m == MODE_NEWS) {
+        if (!rssHeadlines.valid) {
+            mode = MODE_CLOCK;
+            return;
+        }
+        newsHeadlineIndex = newsHeadlineIndex % rssHeadlines.count;
+        newsText = rssHeadlines.headlines[newsHeadlineIndex];
+        newsHeadlineIndex++;
+        displayShowScrolling(newsText);
     }
 }
 
@@ -147,6 +164,13 @@ void setup() {
     }
     lastWeatherFetch = millis();
 
+    if (fetchRssHeadlines(rssHeadlines)) {
+        Serial.println("Headlines fetched.");
+    } else {
+        Serial.println("Initial headlines fetch failed, will retry in loop()");
+    }
+    lastRssFetch = millis();
+
     lastModeSwitch = millis();
 }
 
@@ -181,6 +205,15 @@ void loop() {
         lastWeatherFetch = millis();
     }
 
+    if (!rssHeadlines.valid || millis() - lastRssFetch >= RSS_FETCH_INTERVAL_MS) {
+        if (fetchRssHeadlines(rssHeadlines)) {
+            Serial.println("Headlines refreshed.");
+        } else {
+            Serial.println("Headlines refresh failed, keeping last known values.");
+        }
+        lastRssFetch = millis();
+    }
+
     if (!haveTime) {
         delay(50);
         return;
@@ -188,12 +221,12 @@ void loop() {
 
     bool switchFromClock = mode == MODE_CLOCK &&
                             millis() - lastModeSwitch >= DISPLAY_SWITCH_MS;
-    bool switchFromScroll = (mode == MODE_COUNTDOWN || mode == MODE_WEATHER) &&
+    bool switchFromScroll = (mode == MODE_COUNTDOWN || mode == MODE_WEATHER || mode == MODE_NEWS) &&
                              displayAnimateScroll();
 
     if (switchFromClock) {
-        DisplayMode next = nextIsWeather ? MODE_WEATHER : MODE_COUNTDOWN;
-        nextIsWeather = !nextIsWeather;
+        DisplayMode next = ROTATION[rotationIndex];
+        rotationIndex = (rotationIndex + 1) % (sizeof(ROTATION) / sizeof(ROTATION[0]));
         enterMode(next, now);
     } else if (switchFromScroll) {
         mode = MODE_CLOCK;
