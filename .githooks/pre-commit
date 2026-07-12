@@ -1,0 +1,89 @@
+#!/bin/sh
+#
+# Salaah Clock secret/PII guard (POSIX sh, no external deps — runs on stock macOS).
+#
+# Scans the STAGED diff and blocks the commit if it detects:
+#   * the real WiFi SSID/password (read live from include/secrets.h, never hardcoded)
+#   * accidentally staged secret files (secrets.h, *.pem, *.key, id_rsa, .env)
+#   * private IPv4 addresses (192.168/10/172.16-31.x.x)
+#   * obvious API-key / token assignments
+#
+# It never prints the secret it matched — only file:line + a redacted note.
+# Bypass intentionally with:  git commit --no-verify
+#
+# Activated via:  git config core.hooksPath .githooks
+
+set -u
+
+fail=0
+report() {
+	# $1 = file, $2 = line(s) or "-", $3 = redacted reason
+	printf '  BLOCKED  %s:%s  %s\n' "$1" "$2" "$3" >&2
+	fail=1
+}
+
+tmpd=$(mktemp -d 2>/dev/null || mktemp -d -t pchook) || exit 0
+trap 'rm -rf "$tmpd"' EXIT INT TERM
+
+# Staged, added/copied/modified files only (skip deletions).
+git diff --cached --name-only --diff-filter=ACM > "$tmpd/staged"
+[ -s "$tmpd/staged" ] || exit 0
+
+# --- Pull the real credentials live from the (gitignored) secrets file ---
+SECRETS_FILE="include/secrets.h"
+ssid=""
+pass=""
+if [ -f "$SECRETS_FILE" ]; then
+	ssid=$(sed -n 's/.*#define[[:space:]]\{1,\}WIFI_SSID[[:space:]]\{1,\}"\(.*\)".*/\1/p' "$SECRETS_FILE" | head -n1)
+	pass=$(sed -n 's/.*#define[[:space:]]\{1,\}WIFI_PASSWORD[[:space:]]\{1,\}"\(.*\)".*/\1/p' "$SECRETS_FILE" | head -n1)
+	# Ignore placeholder values (e.g. from secrets.h.example) so the hook
+	# never blocks on the template's dummy strings.
+	case "$ssid" in your-wifi-name|"") ssid="" ;; esac
+	case "$pass" in your-wifi-password|"") pass="" ;; esac
+fi
+
+IP_RE='(^|[^0-9.])(192\.168\.[0-9]{1,3}\.[0-9]{1,3}|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3})([^0-9]|$)'
+KEY_RE='(api[_-]?key|access[_-]?token|secret[_-]?key|auth[_-]?token|bearer[_-]?token)["'"'"' ]*[:=][[:space:]]*["'"'"']?[A-Za-z0-9_-]{16,}'
+
+while IFS= read -r f; do
+	[ -n "$f" ] || continue
+
+	# --- Filename checks ---
+	base=${f##*/}
+	case "$base" in
+		secrets.h)
+			report "$f" "-" "staging a secrets.h file (must stay gitignored)" ;;
+		*.pem|*.key|id_rsa|.env)
+			report "$f" "-" "staging a secret/credential file" ;;
+	esac
+
+	# --- Content checks: only ADDED lines, with real new-file line numbers. ---
+	# awk turns the staged diff into "<newlineno>:<added line text>".
+	# Binary files produce no such lines, so they are skipped automatically.
+	git diff --cached -U0 -- "$f" | awk '
+		/^@@/ { if (match($0, /\+[0-9]+/)) n = substr($0, RSTART+1, RLENGTH-1)+0; next }
+		/^\+\+\+/ { next }
+		/^\+/ { print n ":" substr($0,2); n++; next }
+	' > "$tmpd/added"
+	[ -s "$tmpd/added" ] || continue
+
+	if [ -n "$ssid" ]; then
+		l=$(grep -nF -- "$ssid" "$tmpd/added" | cut -d: -f2 | paste -sd, - 2>/dev/null)
+		[ -n "$l" ] && report "$f" "$l" "matches WIFI_SSID from secrets.h [redacted]"
+	fi
+	if [ -n "$pass" ]; then
+		l=$(grep -nF -- "$pass" "$tmpd/added" | cut -d: -f2 | paste -sd, - 2>/dev/null)
+		[ -n "$l" ] && report "$f" "$l" "matches WIFI_PASSWORD from secrets.h [redacted]"
+	fi
+	l=$(grep -nE "$IP_RE" "$tmpd/added" | cut -d: -f2 | paste -sd, - 2>/dev/null)
+	[ -n "$l" ] && report "$f" "$l" "private IPv4 address [redacted]"
+	l=$(grep -niE "$KEY_RE" "$tmpd/added" | cut -d: -f2 | paste -sd, - 2>/dev/null)
+	[ -n "$l" ] && report "$f" "$l" "possible API key/token assignment [redacted]"
+done < "$tmpd/staged"
+
+if [ "$fail" -ne 0 ]; then
+	printf '\ncommit blocked: possible secret/PII in staged changes (values redacted above).\n' >&2
+	printf 'Fix the lines, or bypass intentionally with:  git commit --no-verify\n' >&2
+	exit 1
+fi
+exit 0
