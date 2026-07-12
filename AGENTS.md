@@ -116,6 +116,27 @@ shows up" or "text looks wrong" report:
   not a wiring issue — don't jump straight to "check your connections"
   without first confirming whether the static clock ever glitches too.
 
+## Voice Q&A — `src/web_ui.cpp`, `src/ai_query.cpp`
+
+- Voice capture is browser-side (Web Speech API), not on-device — the
+  ESP32 has no mic. Don't try to add on-device audio capture without
+  checking with the user first; that's a separate, much bigger hardware
+  project (I2S mic module).
+- `ai_query.cpp` calls Pollinations.ai's keyless text API specifically
+  because the user asked for free-with-no-signup. Don't swap in
+  Groq/OpenAI/xAI Grok without checking — those need an API key/account,
+  which was explicitly ruled out.
+- `web_ui.cpp` uses the ESP32 core's bundled `WebServer`/`ESPmDNS` —
+  don't add ArduinoJson or another HTTP library for this; the `/ask`
+  endpoint deliberately takes a raw `text/plain` body (`server.arg
+  ("plain")`) instead of JSON to avoid the dependency.
+- `askAI()` runs synchronously inside the `/ask` HTTP handler, blocking
+  that request for a few seconds. This matches the existing blocking
+  fetch pattern for weather/RSS/prayer times elsewhere in the codebase
+  — don't introduce async/RTOS tasking just for this.
+- See `CLAUDE.md`'s "Voice Q&A feature" section for the full request
+  flow and its real-hardware test status.
+
 ## Config / tunables — `include/config.h`
 
 Pins, timezone, refresh intervals, brightness, hardware type, all in

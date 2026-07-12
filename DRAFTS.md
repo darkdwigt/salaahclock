@@ -76,3 +76,75 @@ Also fixed a pre-existing bug found during this test: if WiFi didn't
 connect within `connectWiFi()`'s 20s window in `setup()`, the board hung
 forever in the NTP-wait loop with no retry path. Fixed by calling
 `connectWiFi()` again inside that loop when `WiFi.status() != WL_CONNECTED`.
+
+## Weather forecast v2 (high/low + rain/wind callouts) — in progress, 2026-07-05
+
+Replacing the current-conditions weather mode above with a forecast: high/
+low for the day, plus independent rain and wind callouts. Not yet
+implemented — decisions so far:
+
+- **Data source: Open-Meteo** (`api.open-meteo.com/v1/forecast`), not
+  wttr.in's JSON mode. Reasoning: Open-Meteo's daily endpoint returns just
+  `temperature_2m_max`, `temperature_2m_min`, `precipitation_sum`, and
+  `wind_speed_10m_max` — small, purpose-built JSON, easy to parse on the
+  ESP32. wttr.in's `?format=j1` would also work but returns a much larger
+  general-purpose payload requiring an ArduinoJson filter document to
+  extract just the needed fields — more code, more RAM, for the same
+  result. Trade-off accepted: Open-Meteo needs a hardcoded lat/lon instead
+  of wttr.in's IP-geolocation, so the "no city in the URL" preference from
+  v1 doesn't carry over as-is — lat/lon will need to be looked up once and
+  set in `config.h`.
+- **Display format** (leaning, not finalized): `H:24 L:12` normally, with
+  independent optional callouts appended — e.g. `H:22 L:14 RAIN` and/or
+  `H:24 L:12 WIND` — rather than always printing a condition word. No cold
+  callout wanted (the low temp itself already conveys that).
+- **No degree symbol / emoji** — same MAX7219 font constraint as v1.
+- **Rain and wind callouts must be independent** — a rain label and a wind
+  label are separate conditions, never combined into one joint label (e.g.
+  no single "storm" that means both heavy rain and high wind).
+- **Thresholds — not yet chosen.** Explored options:
+  - Generic rain scale (daily total, India Met Dept-style, commonly cited
+    internationally since it matches Open-Meteo's daily mm figure better
+    than hourly-rate scales): gentle/light 1–15mm, heavy 15mm+.
+  - Generic wind scale: Beaufort. Light <20 km/h, moderate 20–38 (left
+    unflagged), heavy 39–61, storm 62+ km/h (Beaufort 8+).
+  - Checked whether South Africa has its own standard: SAWS uses an
+    "Impact-Based Severe Weather Warning System" (levels 1–10,
+    yellow/orange/red) driven by a likelihood × impact matrix, not a fixed
+    mm/km-h cutoff — not directly usable as a hardcoded threshold. One
+    concrete SAWS number found: "damaging winds" warnings start around 35
+    knots (~70 km/h), higher than generic Beaufort's 62 km/h storm cutoff.
+    No official fixed SAWS mm/day figure for heavy rain surfaced.
+  - Checked for an official SAWS-backed API as an alternative to
+    Open-Meteo: **AfriGIS Weather API** resells SAWS forecast/lightning/
+    storm data, but requires emailing them for a manual "free trial"
+    signup (no self-serve key) and uses OAuth2 — too much friction/
+    unknowns (no public pricing) for this project. Decided to stick with
+    Open-Meteo.
+  - **Not yet decided**: final numeric cutoffs to hardcode (generic scales
+    above vs. anchoring the wind "heavy/storm" line to SAWS's ~70 km/h
+    figure instead of Beaufort's 62). Revisit before implementing.
+
+## AI Q&A mode via local web page — idea only, 2026-07-05
+
+Idea: add a mode where a question typed into an HTML page (served on the
+home network, usable from any computer/phone on it) gets sent to a free
+AI API, and the answer scrolls on the display. Not started — architecture
+not yet decided:
+
+- **Where the web page + AI call live** — two options discussed:
+  - ESP32 hosts the page itself and calls a free AI API (e.g. Groq's free
+    tier, OpenAI-compatible) directly. Single device, but adds TLS/memory
+    load to an already-busy microcontroller.
+  - A small companion server (script on a PC/Pi already on the network)
+    hosts the HTML page and makes the AI call, then pushes just the short
+    final answer to a tiny local endpoint on the ESP32. Less load on the
+    microcontroller, easier to iterate, but needs another machine running.
+  - Leaning towards the companion-server option since a personal machine
+    is already on the network, but not decided.
+- **Display constraint**: the 32x8 LED matrix can only scroll short text,
+  so whichever approach is used, the AI must be instructed (system prompt)
+  to keep answers to roughly a sentence or less to stay legible.
+- Overlaps with the "custom messages via WiFi" idea above (inbound
+  push vs. outbound pull) — if that one lands on a push-style local web
+  server first, this could reuse the same inbound-listener plumbing.

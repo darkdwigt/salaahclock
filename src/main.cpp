@@ -1,15 +1,19 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <time.h>
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
 
+#include "ai_query.h"
 #include "config.h"
 #include "display.h"
 #include "prayer_times.h"
 #include "rss.h"
 #include "secrets.h"
 #include "weather.h"
+#include "web_ui.h"
 
-enum DisplayMode { MODE_CLOCK, MODE_COUNTDOWN, MODE_WEATHER, MODE_NEWS };
+enum DisplayMode { MODE_CLOCK, MODE_COUNTDOWN, MODE_WEATHER, MODE_NEWS, MODE_AI_ANSWER };
 
 static PrayerTimes prayerTimes;
 static WeatherData weather;
@@ -34,11 +38,19 @@ static int lastFetchedDay = -1;
 static String countdownText;
 static String weatherText;
 static String newsText;
+static String aiAnswerText;
 
 static void connectWiFi() {
     Serial.printf("Connecting to WiFi \"%s\"...\n", WIFI_SSID);
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    // Trim the radio's peak current draw so the marginal supply doesn't sag.
+    // setTxPower only takes effect after begin() has started the radio, so it
+    // must be called here, not before. 11 dBm is plenty for a home network and
+    // noticeably gentler on the rail than the ~19.5 dBm default. Modem sleep
+    // lowers the steady-state draw between beacons too.
+    WiFi.setTxPower(WIFI_POWER_11dBm);
+    WiFi.setSleep(true);
 
     unsigned long start = millis();
     while (WiFi.status() != WL_CONNECTED && millis() - start < 20000) {
@@ -126,28 +138,67 @@ static void enterMode(DisplayMode m, const struct tm &now) {
         newsText = rssHeadlines.headlines[newsHeadlineIndex];
         newsHeadlineIndex++;
         displayShowScrolling(newsText);
+    } else if (m == MODE_AI_ANSWER) {
+        displayShowScrolling(aiAnswerText);
     }
 }
 
 void setup() {
+    // Disable the (over-sensitive) brownout detector as the very first thing:
+    // this board runs on a marginal USB supply and the WiFi TX current spike
+    // dips the rail just far enough to trip the detector into an endless
+    // reset loop, even though the chip itself keeps running fine through the
+    // dip. See connectWiFi() for the measures that shrink that spike so the
+    // rail stays healthy despite the detector being off.
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+
     Serial.begin(115200);
     delay(200);
+
+    // Run the core slower: less current draw overall means more headroom for
+    // the WiFi radio's peak, which is the load that was tripping brownout.
+    setCpuFrequencyMhz(80);
 
     displayInit();
     displayShowStatic("...");
 
     connectWiFi();
+    // Make the matrix itself report the boot stage, so the failure point is
+    // visible without a serial cable (useful when powered from a wall charger
+    // that has no data lines): shows the IP's last octet on success, "noWF"
+    // if association failed.
+    if (WiFi.status() == WL_CONNECTED) {
+        displayShowStatic(String(WiFi.localIP()[3]));
+    } else {
+        displayShowStatic("noWF");
+    }
+    delay(1500);
+
+    webUIInit();
 
     configTzTime(TZ_INFO, NTP_SERVER);
     Serial.println("Waiting for NTP time sync...");
+    displayShowStatic("ntp");
     struct tm timeinfo;
-    while (!getLocalTime(&timeinfo, 10000)) {
+    // Bounded retry so a WiFi/NTP failure can never trap boot forever (the old
+    // unbounded loop is exactly what left the display frozen on its
+    // placeholder). After giving up we fall through to loop(), which keeps
+    // retrying time sync and fetches on its own schedule.
+    int ntpTries = 0;
+    bool timeSynced = false;
+    while (!(timeSynced = getLocalTime(&timeinfo, 10000))) {
         if (WiFi.status() != WL_CONNECTED) {
             connectWiFi();
         }
         Serial.println("NTP sync retrying...");
+        if (++ntpTries >= 6) {
+            Serial.println("NTP sync not succeeding; continuing to loop() to keep retrying.");
+            break;
+        }
     }
-    Serial.println("Time synced.");
+    if (timeSynced) {
+        Serial.println("Time synced.");
+    }
 
     if (fetchPrayerTimes(prayerTimes)) {
         Serial.println("Prayer times fetched.");
@@ -178,6 +229,8 @@ void loop() {
     if (WiFi.status() != WL_CONNECTED) {
         connectWiFi();
     }
+
+    webUIHandle();
 
     struct tm now;
     bool haveTime = getLocalTime(&now, 100);
@@ -219,9 +272,17 @@ void loop() {
         return;
     }
 
+    // A voice question always pre-empts whatever's currently showing.
+    String voiceAnswer;
+    if (webUITakeAnswer(voiceAnswer)) {
+        aiAnswerText = voiceAnswer;
+        enterMode(MODE_AI_ANSWER, now);
+    }
+
     bool switchFromClock = mode == MODE_CLOCK &&
                             millis() - lastModeSwitch >= DISPLAY_SWITCH_MS;
-    bool switchFromScroll = (mode == MODE_COUNTDOWN || mode == MODE_WEATHER || mode == MODE_NEWS) &&
+    bool switchFromScroll = (mode == MODE_COUNTDOWN || mode == MODE_WEATHER ||
+                              mode == MODE_NEWS || mode == MODE_AI_ANSWER) &&
                              displayAnimateScroll();
 
     if (switchFromClock) {

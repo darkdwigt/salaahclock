@@ -9,12 +9,12 @@ change.
 
 ## Status: working end-to-end on real hardware (as of 2026-07-04)
 
-Parts arrived (invoice: `DIYElectronics_Invoice_REDACTED-ORDER_2026-07-03.pdf`,
-order #REDACTED-ORDER, 2026-07-03 — FireBeetle ESP32, 4x MAX7219 8x8 dot
-matrix, F-F jumper wires). Header pins have been soldered onto the
-FireBeetle, wiring is solid, and the clock is fully functional:
+Parts arrived (FireBeetle ESP32, 4x MAX7219 8x8 dot matrix, F-F jumper
+wires; see the local invoice PDF for order details). Header pins have
+been soldered onto the FireBeetle, wiring is solid, and the clock is
+fully functional:
 
-- WiFi connect (SSID "REDACTED-SSID"), NTP sync, and prayer-time scraping
+- WiFi connect (SSID in `secrets.h`), NTP sync, and prayer-time scraping
   all confirmed working over serial.
 - Display shows the current time, then scrolls a "PrayerName: X min"
   countdown to the next prayer, then switches back — repeating
@@ -79,6 +79,8 @@ FireBeetle, wiring is solid, and the clock is fully functional:
   marker and reading the Azaan/Salaah `HH:MM` pair out of it.
 - `src/display.cpp` — thin wrapper around MD_Parola for the 4x MAX7219
   8x8 chain.
+- `src/web_ui.cpp` / `src/ai_query.cpp` — voice Q&A feature (see its own
+  section below).
 - `include/config.h` — pins, timezone, refresh intervals, brightness,
   hardware type.
 - `include/secrets.h` — WiFi credentials (gitignored; `secrets.h.example`
@@ -86,6 +88,48 @@ FireBeetle, wiring is solid, and the clock is fully functional:
 - `lib/MD_MAX72XX` — vendored, patched copy of the display driver
   library (1MHz SPI clock instead of upstream's 8MHz). Not fetched from
   the PlatformIO registry — see README.
+
+## Voice Q&A feature (added 2026-07-08)
+
+Any device on the same WiFi network can ask the
+clock a question by voice; the answer scrolls on the matrix, then the
+clock resumes its normal clock/countdown/weather/news rotation.
+
+- **Voice capture happens in the browser, not on the ESP32** — the
+  board has no microphone. Open `http://salaahclock.local/` (mDNS; falls
+  back to the IP printed over serial at boot if mDNS doesn't resolve on
+  your device/OS) on a phone or laptop, tap the button, and the page
+  uses the browser's built-in Web Speech API (`SpeechRecognition`) to
+  turn speech into text client-side. **Chrome/Edge only** — Safari and
+  Firefox don't support this API, so the page shows an explicit
+  "not supported" message there instead of failing silently.
+- The recognized text is POSTed as a raw `text/plain` body to `/ask` on
+  the ESP32 (`src/web_ui.cpp`, using the ESP32 core's built-in
+  `WebServer`/`ESPmDNS` — no new PlatformIO dependency).
+- `src/ai_query.cpp` forwards the question to
+  [Pollinations.ai's text API](https://text.pollinations.ai/) —
+  genuinely free and keyless (confirmed via `curl`, no signup), a
+  simple `GET https://text.pollinations.ai/{url-encoded prompt}`
+  returning a plain-text answer. Chosen over Groq/xAI Grok specifically
+  because the user asked for free with **no account/API key signup**.
+- The answer is stripped to printable ASCII (matrix font limitation,
+  same pattern as `weather.cpp`'s degree-symbol stripping) and capped at
+  300 characters so a rambling reply doesn't scroll forever.
+- `handleAsk()` in `web_ui.cpp` calls `askAI()` synchronously inside the
+  HTTP handler (blocks the browser's `fetch()` for a few seconds, same
+  blocking-call pattern already used for weather/RSS/prayer fetches in
+  `main.cpp` — no async/RTOS multitasking was introduced for this).
+  `main.cpp`'s `loop()` polls `webUITakeAnswer()` once per iteration and,
+  if a voice question was just answered, force-switches to
+  `MODE_AI_ANSWER` — this pre-empts whatever's currently on screen
+  (clock, countdown, weather, or news), unlike the other modes which
+  only rotate in on their own schedule.
+- **Not yet tested on real hardware** — builds clean
+  (`pio run` succeeds, RAM 9.4%/Flash 76.8%) and the Pollinations
+  endpoint was verified by hand with `curl`, but the WebServer/mDNS/
+  speech-recognition round trip hasn't been exercised on the physical
+  board yet. If mDNS doesn't resolve on a given phone, use the IP
+  address `connectWiFi()` prints over serial instead.
 
 ## Next steps
 
