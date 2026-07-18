@@ -2,7 +2,9 @@
 #include <MD_MAX72xx.h>
 
 // Fonts for the clock face, based on the Trip5 "Matrix Light" BDF fonts in
-// fonts/ (CC-BY, github.com/trip5/Matrix-Fonts):
+// fonts/ (CC-BY, github.com/trip5/Matrix-Fonts). The hand-redrawn/adjusted
+// glyphs (and their column-byte values) were produced with the row/column
+// dot editor at dotmatrixtool.com (8 rows, "column major, LSB = top"):
 //   - smallFontDay:    weekday label (day) — see the width note below
 //   - timeFontNarrow:  MatrixLight8X, straight conversion, used for the time
 //

@@ -114,3 +114,12 @@ scrolling only, not the static clock.
   (`displayAnimateScroll()` returning `true`), not a fixed timer —
   `DISPLAY_SWITCH_MS` only governs how long the clock face is shown. A
   fixed timer here previously cut the scroll off mid-pass every cycle.
+
+## Acknowledgments
+
+- **Fonts:** the clock face and scrolling text use the "Matrix Light"
+  bitmap fonts by Trip5 — https://github.com/trip5/Matrix-Fonts
+  (licensed CC-BY). The `.bdf` sources are vendored under `fonts/`.
+- **Glyph editing:** the hand-redrawn/adjusted glyphs (and their
+  column-byte values in `include/small_font.h`) were built with the
+  online dot-matrix editor at https://dotmatrixtool.com/
