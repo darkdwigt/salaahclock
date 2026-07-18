@@ -28,20 +28,6 @@
 #define WEATHER_FORMAT "%C+%t"
 #define WEATHER_FETCH_INTERVAL_MS (60UL * 60UL * 1000UL) // re-fetch hourly
 
-// ---- News headlines (RSS) ----
-// News24's own feed (feeds.news24.com) sits behind a Cloudflare JS
-// challenge and returns HTTP 403 to non-browser clients like the ESP32 -
-// confirmed with both http:// and https://, different user agents, still
-// blocked. Using Daily Maverick instead (no bot wall, HTTP 200), whose
-// dmrss/ endpoint takes a ?section= filter - confirmed real server-side
-// filtering (a bogus section name returns zero items).
-#define RSS_FEED_SPORT_URL "https://www.dailymaverick.co.za/dmrss/?section=sport"
-#define RSS_FEED_BUSINESS_URL "https://www.dailymaverick.co.za/dmrss/?section=business-maverick"
-#define RSS_FEED_ECONOMY_URL "https://www.dailymaverick.co.za/dmrss/?section=economy"
-#define RSS_FETCH_INTERVAL_MS (30UL * 60UL * 1000UL) // re-fetch every 30 min
-#define RSS_HEADLINES_PER_FEED 5 // capped per section so all 3 get even airtime
-#define RSS_MAX_HEADLINES (RSS_HEADLINES_PER_FEED * 3)
-
 // ---- Timezone ----
 // South Africa Standard Time, no DST.
 #define TZ_INFO "SAST-2"
@@ -52,4 +38,4 @@
 #define DISPLAY_SWITCH_MS 10000UL                         // clock face shown for 10s
 
 // ---- Display appearance ----
-#define DISPLAY_INTENSITY 2 // 0 (dim) - 15 (max brightness)
+#define DISPLAY_INTENSITY 1 // 0 (dim) - 15 (max brightness)

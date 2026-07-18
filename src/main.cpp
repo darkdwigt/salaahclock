@@ -8,28 +8,23 @@
 #include "config.h"
 #include "display.h"
 #include "prayer_times.h"
-#include "rss.h"
 #include "secrets.h"
 #include "weather.h"
 #include "web_ui.h"
 
-enum DisplayMode { MODE_CLOCK, MODE_COUNTDOWN, MODE_WEATHER, MODE_NEWS, MODE_AI_ANSWER };
+enum DisplayMode { MODE_CLOCK, MODE_COUNTDOWN, MODE_WEATHER, MODE_AI_ANSWER };
 
 static PrayerTimes prayerTimes;
 static WeatherData weather;
-static RssHeadlines rssHeadlines;
 static unsigned long lastPrayerFetch = 0;
 static unsigned long lastWeatherFetch = 0;
-static unsigned long lastRssFetch = 0;
 static unsigned long lastModeSwitch = 0;
 static DisplayMode mode = MODE_CLOCK;
-// Rotates which scrolling mode follows the clock face, so countdown,
-// weather, and news each get an even share of airtime regardless of fetch
-// cadence: clock -> countdown -> clock -> weather -> clock -> news -> repeat.
-static const DisplayMode ROTATION[] = {MODE_COUNTDOWN, MODE_WEATHER, MODE_NEWS};
+// Rotates which scrolling mode follows the clock face, so countdown and
+// weather each get an even share of airtime regardless of fetch cadence:
+// clock -> countdown -> clock -> weather -> repeat.
+static const DisplayMode ROTATION[] = {MODE_COUNTDOWN, MODE_WEATHER};
 static int rotationIndex = 0;
-// Round-robins through the fetched headlines, one per news turn.
-static int newsHeadlineIndex = 0;
 static int lastShownMinute = -1;
 static int lastFetchedDay = -1;
 // MD_Parola's displayText() stores a pointer into this buffer rather than
@@ -37,7 +32,6 @@ static int lastFetchedDay = -1;
 // it must outlive the loop() call that starts the scroll.
 static String countdownText;
 static String weatherText;
-static String newsText;
 static String aiAnswerText;
 
 static void connectWiFi() {
@@ -129,15 +123,6 @@ static void enterMode(DisplayMode m, const struct tm &now) {
         }
         weatherText = weather.text;
         displayShowScrolling(weatherText);
-    } else if (m == MODE_NEWS) {
-        if (!rssHeadlines.valid) {
-            mode = MODE_CLOCK;
-            return;
-        }
-        newsHeadlineIndex = newsHeadlineIndex % rssHeadlines.count;
-        newsText = rssHeadlines.headlines[newsHeadlineIndex];
-        newsHeadlineIndex++;
-        displayShowScrolling(newsText);
     } else if (m == MODE_AI_ANSWER) {
         displayShowScrolling(aiAnswerText);
     }
@@ -160,45 +145,41 @@ void setup() {
     setCpuFrequencyMhz(80);
 
     displayInit();
-    displayShowStatic("...");
+    displayLoading(0);
 
     connectWiFi();
-    // Make the matrix itself report the boot stage, so the failure point is
-    // visible without a serial cable (useful when powered from a wall charger
-    // that has no data lines): shows the IP's last octet on success, "noWF"
-    // if association failed.
-    if (WiFi.status() == WL_CONNECTED) {
-        displayShowStatic(String(WiFi.localIP()[3]));
-    } else {
+    // On WiFi failure, briefly report it on the matrix (visible without a
+    // serial cable) before carrying on; loop() keeps retrying regardless.
+    if (WiFi.status() != WL_CONNECTED) {
         displayShowStatic("noWF");
+        delay(1500);
     }
-    delay(1500);
+    displayLoading(25);
 
     webUIInit();
 
     configTzTime(TZ_INFO, NTP_SERVER);
     Serial.println("Waiting for NTP time sync...");
-    displayShowStatic("ntp");
     struct tm timeinfo;
-    // Bounded retry so a WiFi/NTP failure can never trap boot forever (the old
-    // unbounded loop is exactly what left the display frozen on its
-    // placeholder). After giving up we fall through to loop(), which keeps
-    // retrying time sync and fetches on its own schedule.
-    int ntpTries = 0;
+    // Poll in short slices so the loading bar can animate while we wait, and
+    // bound the total so a WiFi/NTP failure can never trap boot forever (the
+    // old unbounded loop is exactly what left the display frozen). After
+    // giving up we fall through to loop(), which keeps retrying on its own.
     bool timeSynced = false;
-    while (!(timeSynced = getLocalTime(&timeinfo, 10000))) {
-        if (WiFi.status() != WL_CONNECTED) {
-            connectWiFi();
-        }
-        Serial.println("NTP sync retrying...");
-        if (++ntpTries >= 6) {
-            Serial.println("NTP sync not succeeding; continuing to loop() to keep retrying.");
-            break;
-        }
+    int pct = 25;
+    unsigned long ntpStart = millis();
+    while (millis() - ntpStart < 60000UL) {
+        if ((timeSynced = getLocalTime(&timeinfo, 500))) break;
+        if (WiFi.status() != WL_CONNECTED) connectWiFi();
+        if (pct < 60) pct++; // creep the bar so it doesn't look frozen
+        displayLoading(pct);
     }
     if (timeSynced) {
         Serial.println("Time synced.");
+    } else {
+        Serial.println("NTP sync not succeeding; continuing to loop() to keep retrying.");
     }
+    displayLoading(70);
 
     if (fetchPrayerTimes(prayerTimes)) {
         Serial.println("Prayer times fetched.");
@@ -207,6 +188,7 @@ void setup() {
     }
     lastPrayerFetch = millis();
     lastFetchedDay = timeinfo.tm_yday;
+    displayLoading(85);
 
     if (fetchWeather(weather)) {
         Serial.println("Weather fetched.");
@@ -215,12 +197,8 @@ void setup() {
     }
     lastWeatherFetch = millis();
 
-    if (fetchRssHeadlines(rssHeadlines)) {
-        Serial.println("Headlines fetched.");
-    } else {
-        Serial.println("Initial headlines fetch failed, will retry in loop()");
-    }
-    lastRssFetch = millis();
+    displayLoading(100);
+    delay(500); // let the full bar show briefly before the clock takes over
 
     lastModeSwitch = millis();
 }
@@ -258,15 +236,6 @@ void loop() {
         lastWeatherFetch = millis();
     }
 
-    if (!rssHeadlines.valid || millis() - lastRssFetch >= RSS_FETCH_INTERVAL_MS) {
-        if (fetchRssHeadlines(rssHeadlines)) {
-            Serial.println("Headlines refreshed.");
-        } else {
-            Serial.println("Headlines refresh failed, keeping last known values.");
-        }
-        lastRssFetch = millis();
-    }
-
     if (!haveTime) {
         delay(50);
         return;
@@ -282,7 +251,7 @@ void loop() {
     bool switchFromClock = mode == MODE_CLOCK &&
                             millis() - lastModeSwitch >= DISPLAY_SWITCH_MS;
     bool switchFromScroll = (mode == MODE_COUNTDOWN || mode == MODE_WEATHER ||
-                              mode == MODE_NEWS || mode == MODE_AI_ANSWER) &&
+                              mode == MODE_AI_ANSWER) &&
                              displayAnimateScroll();
 
     if (switchFromClock) {
@@ -296,9 +265,12 @@ void loop() {
     }
 
     if (mode == MODE_CLOCK && now.tm_min != lastShownMinute) {
-        char buf[6];
-        snprintf(buf, sizeof(buf), "%02d:%02d", now.tm_hour, now.tm_min);
-        displayShowStatic(buf);
+        static const char *const WDAY[] = {"SUN", "MON", "TUE", "WED",
+                                           "THU", "FRI", "SAT"};
+        char timeBuf[6];
+        snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d",
+                 now.tm_hour, now.tm_min);
+        displayShowDayTime(WDAY[now.tm_wday], timeBuf);
         lastShownMinute = now.tm_min;
     }
 
